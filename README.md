@@ -1,6 +1,6 @@
 # Interactive Audio Transcription with Speaker Identification
 
-A local audio transcription solution with interactive speaker identification, no authentication required.
+A local audio transcription solution with interactive speaker identification, no API usage or authentication required.
 
 ## Features
 
