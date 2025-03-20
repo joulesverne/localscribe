@@ -1,0 +1,25 @@
+# PyTorch is required. Ensure you install a version matching your CUDA setup.
+torch>=1.7.1
+torchaudio>=0.7.0
+
+# OpenAI Whisper is installed directly from GitHub.
+git+https://github.com/openai/whisper.git
+
+# SpeechBrain for speaker diarization.
+speechbrain>=0.5.12
+
+# Required for clustering in speaker diarization
+scikit-learn>=0.24.0
+tqdm>=4.62.0
+
+# Audio processing libraries.
+numpy
+soundfile
+librosa
+
+# For interactive audio playback during speaker identification
+pygame>=2.0.0
+
+# FFmpeg is required for audio conversion
+# Install via your system's package manager (not through pip)
+# e.g., apt-get install ffmpeg, brew install ffmpeg, etc.
