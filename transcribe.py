@@ -32,6 +32,15 @@ import torchaudio
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 from tqdm import tqdm
+import threading
+from collections import defaultdict
+
+class TranscriptionManager:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.results = defaultdict(list)
+        self.completed = False
+        self.error = None
 
 def transcribe_segment(audio_data, sample_rate, start, end, model):
     """
@@ -380,6 +389,37 @@ def identify_speakers(speaker_samples):
     return speaker_names
 
 
+def run_transcription_pipeline(audio_file, speaker_segments, model_size, manager):
+    try:
+        audio_data, sample_rate = librosa.load(audio_file, sr=None, mono=False)
+        model = whisper.load_model(model_size)
+        
+        for start, end, speaker_id in speaker_segments:
+            text = transcribe_segment(audio_data, sample_rate, start, end, model)
+            with manager.lock:
+                manager.results[speaker_id].append((start, end, text))
+        
+        manager.completed = True
+    
+    except Exception as e:
+        manager.error = str(e)
+
+
+def write_transcript(transcription_results, speaker_names, output_file):
+    transcript_lines = []
+    for speaker_id, segments in transcription_results.items():
+        speaker_name = speaker_names.get(speaker_id, f"Speaker {speaker_id}")
+        for start, end, text in segments:
+            transcript_lines.append(f"{speaker_name}: {text}")
+
+    final_transcript = "\n".join(transcript_lines)
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(final_transcript)
+
+    print(f"Transcript written to {output_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Interactive Audio Transcription with Speaker Identification"
@@ -423,65 +463,27 @@ def main():
     if args.convert_audio or not input_file.lower().endswith(('.wav', '.flac')):
         input_file = convert_to_wav(args.audio_file)
 
-    # Load Whisper model (this will use GPU if available)
-    print("Loading Whisper model...")
-    model = whisper.load_model(args.whisper_model)
-
     # Perform speaker diarization
-    speaker_segments = perform_diarization(
-        input_file, 
-        min_speakers=args.min_speakers,
-        max_speakers=args.max_speakers
+    speaker_segments = perform_diarization(input_file, args.min_speakers, args.max_speakers)
+    
+    trans_manager = TranscriptionManager()
+    transcription_thread = threading.Thread(
+        target=run_transcription_pipeline,
+        args=(input_file, speaker_segments, args.whisper_model, trans_manager)
     )
+    transcription_thread.start()
     
-    # Sort segments by start time
-    speaker_segments.sort(key=lambda x: x[0])
-    print(f"Diarization complete. Found {len(speaker_segments)} segments.")
-    
-    # Extract representative samples for each speaker
-    speaker_samples = extract_speaker_samples(
-        input_file, 
-        speaker_segments, 
-        samples_per_speaker=args.samples_per_speaker
-    )
-    
-    # Identify speakers through user interaction
+    input("\nPress Enter to begin speaker identification...")
+    speaker_samples = extract_speaker_samples(input_file, speaker_segments, samples_per_speaker=5)
     speaker_names = identify_speakers(speaker_samples)
-
-    # Load audio file for transcription
-    print("Loading audio for transcription...")
-    try:
-        # Use librosa which has better format support
-        audio_data, sample_rate = librosa.load(input_file, sr=None)
-        
-        # Process each speaker segment and transcribe it
-        transcript_lines = []
-        for start, end, speaker_label in speaker_segments:
-            speaker_name = speaker_names.get(speaker_label, f"Speaker {speaker_label}")
-            
-            # Add progress information for long segments
-            duration = end - start
-            if duration > 20:
-                print(f"Transcribing segment {start:.2f}s - {end:.2f}s for {speaker_name} (this might take a while)...")
-            else:
-                print(f"Transcribing segment {start:.2f}s - {end:.2f}s for {speaker_name}...")
-                
-            text = transcribe_segment(audio_data, sample_rate, start, end, model)
-            transcript_lines.append(f"{speaker_name}: {text}")
-
-        # Combine all transcript lines into a final transcript
-        final_transcript = "\n".join(transcript_lines)
-
-        # Write the transcript to the output file
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(final_transcript)
-
-        print(f"Transcript written to {args.output}")
-        
-    except Exception as e:
-        print(f"Error during transcription: {str(e)}")
-        print("Please make sure your audio file is in a supported format.")
+    
+    transcription_thread.join()
+    
+    if trans_manager.error:
+        print(f"\nTranscription failed: {trans_manager.error}")
         sys.exit(1)
+        
+    write_transcript(trans_manager.results, speaker_names, args.output)
 
 if __name__ == "__main__":
     main()
